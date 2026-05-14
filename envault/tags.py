@@ -68,3 +68,24 @@ def keys_for_tag(vault, tag: str) -> List[str]:
 def all_tags(vault) -> Dict[str, List[str]]:
     """Return the full tag map (key -> list of tags), excluding internal keys."""
     return {k: v for k, v in _load_tag_map(vault).items() if k != TAG_KEY}
+
+
+def rename_tag(vault, old_tag: str, new_tag: str, passphrase: str) -> int:
+    """Rename *old_tag* to *new_tag* across all keys in the vault.
+
+    Returns the number of keys that were updated.  Raises :class:`TagError`
+    if *new_tag* is empty or identical to *old_tag*.
+    """
+    if not new_tag:
+        raise TagError("New tag must not be empty.")
+    if old_tag == new_tag:
+        raise TagError("New tag must differ from the old tag.")
+    tag_map = _load_tag_map(vault)
+    updated = 0
+    for key, tags in tag_map.items():
+        if old_tag in tags:
+            tags[tags.index(old_tag)] = new_tag
+            updated += 1
+    if updated:
+        _save_tag_map(vault, tag_map, passphrase)
+    return updated
