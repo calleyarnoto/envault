@@ -1,13 +1,15 @@
-"""Vault management: read, write, and manage encrypted .env vault files."""
+"""Vault — stores and retrieves encrypted secrets for a project."""
+
+from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Iterator, Optional
 
-from envault.crypto import encrypt, decrypt
+from envault.audit import append_audit_entry
+from envault.crypto import decrypt, encrypt
 
-DEFAULT_VAULT_FILENAME = ".envault"
+VAULT_VERSION = 1
 
 
 class VaultError(Exception):
@@ -15,10 +17,10 @@ class VaultError(Exception):
 
 
 class Vault:
-    """Represents an encrypted vault for a project's environment secrets."""
+    """Manages an encrypted secrets vault on disk."""
 
-    def __init__(self, path: Path, passphrase: str) -> None:
-        self.path = Path(path)
+    def __init__(self, path: Path, passphrase: str):
+        self._path = Path(path)
         self._passphrase = passphrase
         self._secrets: Dict[str, str] = {}
 
@@ -26,59 +28,72 @@ class Vault:
     # Persistence
     # ------------------------------------------------------------------
 
-    def load(self) -> None:
-        """Load and decrypt secrets from the vault file."""
-        if not self.path.exists():
-            raise VaultError(f"Vault file not found: {self.path}")
-        ciphertext = self.path.read_text(encoding="utf-8").strip()
+    @classmethod
+    def init(cls, path: Path, passphrase: str) -> "Vault":
+        """Create a new, empty vault file."""
+        path = Path(path)
+        if path.exists():
+            raise VaultError(f"Vault already exists at {path}")
+        vault = cls(path, passphrase)
+        vault.save()
+        append_audit_entry(path, action="init")
+        return vault
+
+    @classmethod
+    def load(cls, path: Path, passphrase: str) -> "Vault":
+        """Load and decrypt an existing vault file."""
+        path = Path(path)
+        if not path.exists():
+            raise VaultError(f"No vault found at {path}")
+        raw = path.read_text(encoding="utf-8")
         try:
-            plaintext = decrypt(ciphertext, self._passphrase)
+            payload = json.loads(raw)
+            plaintext = decrypt(payload["data"], passphrase)
+            secrets = json.loads(plaintext)
         except Exception as exc:
-            raise VaultError(f"Failed to decrypt vault: {exc}") from exc
-        try:
-            self._secrets = json.loads(plaintext)
-        except json.JSONDecodeError as exc:
-            raise VaultError(f"Vault payload is corrupted: {exc}") from exc
+            raise VaultError(f"Failed to open vault: {exc}") from exc
+        vault = cls(path, passphrase)
+        vault._secrets = secrets
+        return vault
 
     def save(self) -> None:
-        """Encrypt and persist secrets to the vault file."""
-        plaintext = json.dumps(self._secrets, indent=2)
+        """Encrypt and write the vault to disk."""
+        plaintext = json.dumps(self._secrets)
         ciphertext = encrypt(plaintext, self._passphrase)
-        self.path.write_text(ciphertext + "\n", encoding="utf-8")
+        payload = {"version": VAULT_VERSION, "data": ciphertext}
+        self._path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     # ------------------------------------------------------------------
     # Secret management
     # ------------------------------------------------------------------
 
     def set(self, key: str, value: str) -> None:
-        """Add or update a secret."""
+        """Store a secret and persist the vault."""
         self._secrets[key] = value
+        self.save()
+        append_audit_entry(self._path, action="set", key=key)
 
-    def get(self, key: str) -> Optional[str]:
-        """Return the value for *key*, or None if not present."""
-        return self._secrets.get(key)
+    def get(self, key: str) -> str:
+        """Retrieve a secret by key."""
+        if key not in self._secrets:
+            raise VaultError(f"Key not found: {key!r}")
+        append_audit_entry(self._path, action="get", key=key)
+        return self._secrets[key]
 
-    def delete(self, key: str) -> bool:
-        """Remove *key* from the vault. Returns True if it existed."""
-        return self._secrets.pop(key, None) is not None
+    def delete(self, key: str) -> None:
+        """Remove a secret from the vault."""
+        if key not in self._secrets:
+            raise VaultError(f"Key not found: {key!r}")
+        del self._secrets[key]
+        self.save()
+        append_audit_entry(self._path, action="delete", key=key)
 
-    def list_keys(self):
-        """Return a sorted list of all secret keys."""
-        return sorted(self._secrets.keys())
+    def list_keys(self) -> list[str]:
+        """Return sorted list of all secret keys."""
+        return sorted(self._secrets)
 
-    def export_env(self) -> str:
-        """Return secrets formatted as shell export statements."""
-        lines = [f'export {k}="{v}"' for k, v in sorted(self._secrets.items())]
-        return os.linesep.join(lines)
+    def __iter__(self) -> Iterator[tuple[str, str]]:
+        yield from self._secrets.items()
 
     def __len__(self) -> int:
         return len(self._secrets)
-
-
-def init_vault(path: Path, passphrase: str) -> Vault:
-    """Create a new, empty vault file at *path*."""
-    if path.exists():
-        raise VaultError(f"Vault already exists: {path}")
-    vault = Vault(path, passphrase)
-    vault.save()
-    return vault
