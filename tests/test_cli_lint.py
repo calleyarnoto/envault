@@ -63,3 +63,15 @@ def test_wrong_passphrase_exits_nonzero(runner, vault_file):
     )
     assert result.exit_code == 1
     assert "Error" in result.output
+
+
+def test_multiple_issues_all_reported(runner, vault_file):
+    """Ensure that all lint issues are reported, not just the first one."""
+    v = Vault.load(vault_file, "passphrase")
+    v.set("bad_key", "x")
+    v.set("another_bad_key", "y")
+    v.save()
+    result = _invoke(runner, vault_file)
+    # Both offending keys should appear somewhere in the output
+    assert "bad_key" in result.output
+    assert "another_bad_key" in result.output
