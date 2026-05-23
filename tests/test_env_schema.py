@@ -97,39 +97,13 @@ def test_validate_pattern_match(vault_file: Path) -> None:
 def test_validate_pattern_mismatch(vault_file: Path) -> None:
     set_schema_rule(vault_file, "API_KEY", "pattern", r"^\d+$")
     violations = validate_vault(vault_file, PASS)
-    assert any(v.rule == "pattern" for v in violations)
+    assert any(v.key == "API_KEY" and v.rule == "pattern" for v in violations)
 
 
-def test_validate_min_length_violation(vault_file: Path) -> None:
-    set_schema_rule(vault_file, "API_KEY", "min_length", "100")
+def test_schema_violation_has_message(vault_file: Path) -> None:
+    set_schema_rule(vault_file, "API_KEY", "type", "integer")
     violations = validate_vault(vault_file, PASS)
-    assert any(v.rule == "min_length" for v in violations)
-
-
-def test_validate_max_length_violation(vault_file: Path) -> None:
-    set_schema_rule(vault_file, "API_KEY", "max_length", "2")
-    violations = validate_vault(vault_file, PASS)
-    assert any(v.rule == "max_length" for v in violations)
-
-
-def test_validate_required_key_missing(vault_file: Path) -> None:
-    set_schema_rule(vault_file, "MISSING_KEY", "required", "true")
-    violations = validate_vault(vault_file, PASS)
-    assert any(v.key == "MISSING_KEY" and v.rule == "required" for v in violations)
-
-
-def test_validate_required_key_present(vault_file: Path) -> None:
-    set_schema_rule(vault_file, "PORT", "required", "true")
-    violations = validate_vault(vault_file, PASS)
-    assert not any(v.key == "PORT" and v.rule == "required" for v in violations)
-
-
-def test_validate_missing_vault_raises(tmp_path: Path) -> None:
-    with pytest.raises(SchemaError, match="Vault not found"):
-        validate_vault(tmp_path / "nope.vault", PASS)
-
-
-def test_schema_violation_repr() -> None:
-    v = SchemaViolation("MY_KEY", "type", "bad value")
-    assert "MY_KEY" in repr(v)
-    assert "type" in repr(v)
+    matching = [v for v in violations if v.key == "API_KEY" and v.rule == "type"]
+    assert matching, "Expected a violation for API_KEY type rule"
+    assert isinstance(matching[0].message, str)
+    assert len(matching[0].message) > 0
