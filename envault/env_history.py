@@ -51,7 +51,10 @@ def _load_history(vault_path: Path) -> dict:
     p = _history_path(vault_path)
     if not p.exists():
         return {}
-    return json.loads(p.read_text())
+    try:
+        return json.loads(p.read_text())
+    except json.JSONDecodeError as exc:
+        raise HistoryError(f"Corrupted history file: {p}") from exc
 
 
 def _save_history(vault_path: Path, data: dict) -> None:
@@ -91,3 +94,9 @@ def clear_history(vault_path: Path, key: Optional[str] = None) -> int:
     entries = data.pop(key, [])
     _save_history(vault_path, data)
     return len(entries)
+
+
+def get_latest(vault_path: Path, key: str) -> Optional[HistoryEntry]:
+    """Return the most recent history entry for *key*, or None if no history exists."""
+    entries = get_history(vault_path, key)
+    return entries[-1] if entries else None
