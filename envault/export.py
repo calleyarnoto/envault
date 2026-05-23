@@ -66,10 +66,19 @@ def _to_shell(secrets: Dict[str, str]) -> str:
 
 
 def _to_github_actions(secrets: Dict[str, str]) -> str:
-    """Produce ``echo "KEY=VALUE" >> $GITHUB_ENV`` lines."""
+    """Produce ``echo "KEY=VALUE" >> $GITHUB_ENV`` lines.
+
+    Note: values containing newlines are written using the GitHub Actions
+    multiline syntax (``KEY<<EOF`` / ``EOF`` delimiter) to avoid truncation.
+    """
     lines = []
     for key, value in sorted(secrets.items()):
-        lines.append(f'echo "{key}={value}" >> $GITHUB_ENV')
+        if "\n" in value:
+            lines.append(f"{key}<<EOF")
+            lines.append(value)
+            lines.append("EOF")
+        else:
+            lines.append(f'echo "{key}={value}" >> $GITHUB_ENV')
     return "\n".join(lines) + ("\n" if lines else "")
 
 
